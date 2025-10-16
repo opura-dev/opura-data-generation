@@ -1,0 +1,8 @@
+streamlit>=1.18.0
+pandas>=1.5.0
+numpy>=1.24.0
+plotly>=5.0.0
+sqlalchemy>=1.4
+psycopg2-binary>=2.9
+faker>=18.0.0
+tqdm>=4.64.0

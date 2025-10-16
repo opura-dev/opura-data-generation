@@ -1,0 +1,108 @@
+[2025-10-15 19:58:20.911029] ERROR: insert or update on table "productcatalog" violates foreign key constraint "productcatalog_tenantid_fkey"
+DETAIL:  Key (tenantid)=(6) is not present in table "tenantdata".
+
+PARAMS: (6, '055fc170-41e5-4ff9-92d1-450745324141', 'OP_6_1430', 'Position Lite', 'Health', 'Above standard drop size control positive turn way sister.', 1447.97, '["https://picsum.photos/644/531", "https://picsum.photos/441/882", "https://dummyimage.com/301x133"]', 2911, '["discount", "eco", "popular"]', 355, 'Nike', '{"size": "L", "color": "Black"}')
+QUERY: 
+                    INSERT INTO productcatalog (
+                        tenantid, productid, opuraproductid, productname, productcategory,
+                        productdescription, productprice, productimages, productreviews,
+                        producttags, productquantity, productbrand, productvariants
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                
+
+[2025-10-15 19:58:22.350532] ERROR: insert or update on table "productcatalog" violates foreign key constraint "productcatalog_tenantid_fkey"
+DETAIL:  Key (tenantid)=(6) is not present in table "tenantdata".
+
+PARAMS: (6, 'ce1e1728-1514-4d42-b271-d22c3a972f09', 'OP_6_5815', 'Successful Pro', 'Grocery', 'Learn build hair sister partner church I particular east out might television give.', 1708.05, '["https://picsum.photos/861/349"]', 2213, '["discount"]', 117, 'Asus', '{"size": "M", "color": "Black"}')
+QUERY: 
+                    INSERT INTO productcatalog (
+                        tenantid, productid, opuraproductid, productname, productcategory,
+                        productdescription, productprice, productimages, productreviews,
+                        producttags, productquantity, productbrand, productvariants
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                
+
+[2025-10-15 19:58:23.473833] ERROR: insert or update on table "productcatalog" violates foreign key constraint "productcatalog_tenantid_fkey"
+DETAIL:  Key (tenantid)=(6) is not present in table "tenantdata".
+
+PARAMS: (6, '760573b7-a008-4133-bfe7-b3b7986d8496', 'OP_6_7677', 'Term Plus', 'Grocery', 'Young meeting front reason health five would job.', 81.82, '["https://picsum.photos/582/499", "https://dummyimage.com/512x111"]', 3705, '["discount", "popular", "eco"]', 192, 'Philips', '{"size": "NA", "color": "NA"}')
+QUERY: 
+                    INSERT INTO productcatalog (
+                        tenantid, productid, opuraproductid, productname, productcategory,
+                        productdescription, productprice, productimages, productreviews,
+                        producttags, productquantity, productbrand, productvariants
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                
+
+[2025-10-15 19:58:24.384676] ERROR: insert or update on table "productcatalog" violates foreign key constraint "productcatalog_tenantid_fkey"
+DETAIL:  Key (tenantid)=(6) is not present in table "tenantdata".
+
+PARAMS: (6, '463c50f5-cb6c-42dd-821f-f833d9997fa9', 'OP_6_7330', 'End Lite', 'Accessories', 'Produce in form plant today style strong.', 1757.6, '["https://dummyimage.com/457x247", "https://picsum.photos/932/886", "https://placekitten.com/870/975"]', 4274, '["popular", "new"]', 374, 'Adidas', '{"size": "L", "color": "White"}')
+QUERY: 
+                    INSERT INTO productcatalog (
+                        tenantid, productid, opuraproductid, productname, productcategory,
+                        productdescription, productprice, productimages, productreviews,
+                        producttags, productquantity, productbrand, productvariants
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                
+
+[2025-10-15 19:58:25.936064] ERROR: insert or update on table "productcatalog" violates foreign key constraint "productcatalog_tenantid_fkey"
+DETAIL:  Key (tenantid)=(6) is not present in table "tenantdata".
+
+PARAMS: (6, '116a9d21-5309-4cfb-af4e-431566699e7f', 'OP_6_7317', 'Level Pro', 'Books', 'Fire task plan say behavior design.', 1322.65, '["https://placekitten.com/995/355", "https://picsum.photos/451/915"]', 673, '["discount"]', 188, 'Asus', '{"size": "M", "color": "White"}')
+QUERY: 
+                    INSERT INTO productcatalog (
+                        tenantid, productid, opuraproductid, productname, productcategory,
+                        productdescription, productprice, productimages, productreviews,
+                        producttags, productquantity, productbrand, productvariants
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                
+
+[2025-10-15 19:58:26.907977] ERROR: insert or update on table "productcatalog" violates foreign key constraint "productcatalog_tenantid_fkey"
+DETAIL:  Key (tenantid)=(6) is not present in table "tenantdata".
+
+PARAMS: (6, '73de378c-faab-4799-8c96-e8712b810353', 'OP_6_6038', 'Again Plus', 'Beauty', 'Ready could clear event share himself always sing anything goal.', 327.41, '["https://picsum.photos/638/837", "https://placekitten.com/596/874"]', 3425, '["discount", "eco", "new"]', 166, 'Dell', '{"size": "S", "color": "Blue"}')
+QUERY: 
+                    INSERT INTO productcatalog (
+                        tenantid, productid, opuraproductid, productname, productcategory,
+                        productdescription, productprice, productimages, productreviews,
+                        producttags, productquantity, productbrand, productvariants
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                
+
+[2025-10-15 19:58:27.979052] ERROR: insert or update on table "productcatalog" violates foreign key constraint "productcatalog_tenantid_fkey"
+DETAIL:  Key (tenantid)=(6) is not present in table "tenantdata".
+
+PARAMS: (6, 'd96c1d2b-84d1-46ab-804a-07b812b4c3c0', 'OP_6_6141', 'Main Max', 'Kitchenware', 'Those send tree recently imagine ball.', 620.0, '["https://placekitten.com/571/333", "https://placekitten.com/473/710"]', 1182, '["new", "popular", "eco"]', 316, 'Nike', '{"size": "XL", "color": "NA"}')
+QUERY: 
+                    INSERT INTO productcatalog (
+                        tenantid, productid, opuraproductid, productname, productcategory,
+                        productdescription, productprice, productimages, productreviews,
+                        producttags, productquantity, productbrand, productvariants
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                
+
+[2025-10-15 19:58:29.700580] ERROR: insert or update on table "productcatalog" violates foreign key constraint "productcatalog_tenantid_fkey"
+DETAIL:  Key (tenantid)=(6) is not present in table "tenantdata".
+
+PARAMS: (6, '8deb3e5f-d3d8-4ac6-b74e-cef372d5b2ea', 'OP_6_2136', 'Strong Lite', 'Automotive', 'Front face fly value year wish.', 1257.35, '["https://picsum.photos/412/733", "https://dummyimage.com/643x686", "https://placekitten.com/812/1011"]', 4237, '["popular", "premium", "discount"]', 23, 'Philips', '{"size": "XL", "color": "NA"}')
+QUERY: 
+                    INSERT INTO productcatalog (
+                        tenantid, productid, opuraproductid, productname, productcategory,
+                        productdescription, productprice, productimages, productreviews,
+                        producttags, productquantity, productbrand, productvariants
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                
+
+[2025-10-15 19:58:30.763982] ERROR: insert or update on table "productcatalog" violates foreign key constraint "productcatalog_tenantid_fkey"
+DETAIL:  Key (tenantid)=(6) is not present in table "tenantdata".
+
+PARAMS: (6, 'a1893131-7b1d-4bc4-aed9-50a7dcabf4a4', 'OP_6_7821', 'Character Pro', 'Toys', 'Present rather thought eight data magazine movement poor.', 676.8, '["https://dummyimage.com/450x356", "https://picsum.photos/357/184", "https://dummyimage.com/287x486"]', 842, '["new", "eco"]', 304, 'Dell', '{"size": "XL", "color": "Green"}')
+QUERY: 
+                    INSERT INTO productcatalog (
+                        tenantid, productid, opuraproductid, productname, productcategory,
+                        productdescription, productprice, productimages, productreviews,
+                        producttags, productquantity, productbrand, productvariants
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                
+
