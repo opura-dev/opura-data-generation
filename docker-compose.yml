@@ -1,0 +1,20 @@
+version: "3.9"
+services:
+  bigquery-app:
+    build: .
+    container_name: bigquery_streamlit
+    restart: always
+    ports:
+      - "8501:8501"
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: "/app/keys/service_account.json"
+      STREAMLIT_ENV: "production"
+    volumes:
+      - ./keys/service_account.json:/app/keys/service_account.json:ro
+      - ./logs:/app/logs  # store logs on host
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
