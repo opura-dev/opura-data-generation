@@ -5,6 +5,7 @@ import random
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pandas as pd
 import streamlit as st
 import plotly.express as px
 from faker import Faker
@@ -22,11 +23,17 @@ from bigquery_connect import (
     DATASET_ID,
 )
 
-st.set_page_config(page_title="BigQuery Data Generator", layout="wide")
-st.title("🚀 BigQuery Data Generator (Streaming Inserts)")
+# -----------------------------
+# App setup
+# -----------------------------
+st.set_page_config(page_title="BigQuery Data Generator + Analytics", layout="wide")
+st.title("🚀 BigQuery Data Generator + Analytics (Streaming Inserts)")
 
 faker = Faker()
 
+# ============================================================
+# ✅ Global Product Category Config (with weights)
+# ============================================================
 PRODUCT_CATEGORY_CONFIG = {
     "Electronics": {"price_range": (500, 5000), "weight": 5},
     "Grocery": {"price_range": (10, 300), "weight": 8},
@@ -36,46 +43,11 @@ PRODUCT_CATEGORY_CONFIG = {
     "Beauty": {"price_range": (50, 800), "weight": 4},
 }
 
-# ---------- Helpers ----------
+# -----------------------------
+# Helpers
+# -----------------------------
 def iso_date(dt) -> str:
     return dt.isoformat()[:10]
-
-def gen_tenants(n: int):
-    out = []
-    for tid in range(1, n + 1):
-        onboard = (datetime.now(timezone.utc) - timedelta(days=random.randint(100, 1000))).date()
-        out.append({
-            "tenantid": tid,
-            "tenantname": faker.company(),
-            "onboardeddate": iso_date(onboard),
-            "cataloglastupdated": iso_date(onboard + timedelta(days=30)),
-            "lasttraineddate": iso_date(onboard + timedelta(days=60)),
-            "active": True,
-        })
-    return out
-
-def gen_festivals(tenantid: int, m: int = 5):
-    cats = ["Sale", "Holiday", "Offer", "Cultural", "Seasonal"]
-    events = []
-    for _ in range(m):
-        start = faker.date_between(datetime(2023, 1, 1), datetime(2025, 10, 15))
-        days = random.randint(1, 7)
-        end = start + timedelta(days=days)
-        ts = datetime.now(timezone.utc).isoformat()
-        events.append({
-            "tenantid": tenantid,
-            "festival_name": faker.word().capitalize(),
-            "start_date": iso_date(start),
-            "end_date": iso_date(end),
-            "region": "All India",
-            "category": random.choice(cats),
-            "weight": round(random.uniform(0.5, 1.5), 2),
-            "is_active": True,
-            "created_at": ts,
-            "updated_at": ts,
-            "no_of_days": days,
-        })
-    return events
 
 def gen_products(tenantid: int, num_products: int):
     cats = ["Electronics", "Grocery", "Apparel", "Books", "Furniture", "Beauty"]
@@ -91,7 +63,9 @@ def gen_products(tenantid: int, num_products: int):
             "Furniture": (1500, 25000),
             "Beauty": (50, 800),
         }.get(cat, (50, 2000))
+
         price = round(random.uniform(*rng), 2)
+
         out.append({
             "productid": pid,
             "tenantid": tenantid,
@@ -100,16 +74,31 @@ def gen_products(tenantid: int, num_products: int):
             "productcategory": cat,
             "productdescription": faker.sentence(nb_words=8),
             "productprice": float(price),
-            "productimages": json.dumps(["https://example.com/img1.jpg"]),
-            "productreviews": random.randint(0, 2000),
-            "producttags": json.dumps(["eco","popular"]),
+
+            # ✅ Convert list → JSON string
+            "productimages": json.dumps([faker.image_url()]),
+
+            # ✅ Convert tags list → JSON string
+            "producttags": json.dumps(random.sample(["eco","popular","discount","premium","new"], k=2)),
+
             "productquantity": random.randint(10, 200),
             "productbrand": random.choice(["BrandA","BrandB","BrandC","BrandD"]),
-            "productvariants": json.dumps({"color": "Black"}),
+
+            # ✅ Convert dict → JSON string
+            "productvariants": json.dumps({"color": random.choice(["Red","Blue","Black","White"])})
         })
     return out
 
-def gen_customers(tenantid: int, products, num_customers: int, avg_orders: int, sale_prob_pct: int, repeat_prob_pct: int, high_spender_prob_pct: int):
+def gen_customers(
+    tenantid: int,
+    products: list[dict],
+    num_customers: int,
+    avg_orders: int,
+    sale_prob_pct: int,
+    repeat_prob_pct: int,
+    high_spender_prob_pct: int,
+):
+    """Generate customers using existing product catalog."""
     def pick_age():
         r = random.random() * 100
         if r < 20: return random.randint(18, 25)
@@ -117,58 +106,71 @@ def gen_customers(tenantid: int, products, num_customers: int, avg_orders: int, 
         if r < 90: return random.randint(41, 60)
         return random.randint(61, 80)
 
-    customers = []
+    # Weighted category selection map (safe defaults)
+    unique_cats = {p["productcategory"] for p in products}
+    cat_weights = {c: PRODUCT_CATEGORY_CONFIG.get(c, {}).get("weight", 1) for c in unique_cats}
+
+    def weighted_random_product():
+        cats = list(cat_weights.keys())
+        weights = [cat_weights[c] for c in cats]
+        chosen = random.choices(cats, weights=weights, k=1)[0]
+        eligible = [p for p in products if p["productcategory"] == chosen]
+        return random.choice(eligible)
+
     product_ids = [p["productid"] for p in products]
+    out = []
 
     for _ in range(num_customers):
         cid = str(uuid.uuid4())
         wishlist = random.sample(product_ids, k=min(5, len(product_ids)))
         orders = []
         num_purchases = random.randint(max(1, avg_orders - 2), avg_orders + 2)
+
         for __ in range(num_purchases):
-            pid = random.choice(product_ids)
-            mrp = float(next(p["productprice"] for p in products if p["productid"] == pid))
-            sale = (random.random() * 100) < sale_prob_pct
-            saleprice = round(max(0.01, mrp * (1 - random.uniform(0.05, 0.40))), 2) if sale else mrp
+            p = weighted_random_product()
+            pid = p["productid"]
+            mrp = float(p["productprice"])
+            is_sale = (random.random() * 100) < sale_prob_pct
+            saleprice = round(mrp * (1 - random.uniform(0.05, 0.40)), 2) if is_sale else mrp
             qty = random.randint(1, 5) if (random.random() * 100) < high_spender_prob_pct else random.randint(1, 3)
             base_date = faker.date_between(start_date='-730d', end_date='today')
 
             orders.append({
-                "productId": str(pid),
+                "productId": pid,
                 "purchaseDate": iso_date(base_date),  # DATE
                 "opuraProductID": f"OP_{tenantid}_{random.randint(1000, 9999)}",
-                "purchaseQuantity": int(qty),
-                "mrp": float(mrp),
-                "saleprice": float(saleprice),
+                "purchaseQuantity": qty,
+                "mrp": mrp,
+                "saleprice": saleprice,
             })
 
             if (random.random() * 100) < repeat_prob_pct:
                 repeat_date = base_date + timedelta(days=random.randint(15, 35))
                 orders.append({
-                    "productId": str(pid),
+                    "productId": pid,
                     "purchaseDate": iso_date(repeat_date),
                     "opuraProductID": f"OP_{tenantid}_{random.randint(1000, 9999)}",
-                    "purchaseQuantity": int(qty),
-                    "mrp": float(mrp),
-                    "saleprice": float(saleprice),
+                    "purchaseQuantity": qty,
+                    "mrp": mrp,
+                    "saleprice": saleprice,
                 })
 
-        customers.append({
+        out.append({
             "customerid": cid,
             "opuracustomerid": f"CUST_{tenantid}_{random.randint(10000, 99999)}",
-            "tenantid": int(tenantid),
+            "tenantid": tenantid,
             "customername": faker.name(),
-            "customerpersonaldetails": {"age": int(pick_age()), "gender": random.choice(["Male", "Female", "Other"])},
+            "customerpersonaldetails": {"age": pick_age(), "gender": random.choice(["Male","Female","Other"])},
             "customergeolocations": {"city": faker.city()},
-            "customerwishlist": [str(x) for x in wishlist],
-            "purchaseorders": orders,
-            "customertags": {"high_spender": bool(random.random() * 100 < high_spender_prob_pct)},
-            "opuracustomertags": {"tier": random.choice(["gold", "silver", "bronze"])},
-            "recommendedproducts": [str(x) for x in random.sample(product_ids, k=min(3, len(product_ids)))],
+            "customerwishlist": wishlist,                           # ARRAY
+            "purchaseorders": orders,                               # ARRAY<RECORD>
+            "customertags": {"high_spender": random.random()*100 < high_spender_prob_pct},  # RECORD
+            #"opuracustomertags": {"tier": random.choice(["gold","silver","bronze"])},       # RECORD ✅
+            "recommendedproducts": random.sample(product_ids, min(3, len(product_ids))),     # ARRAY
         })
-    return customers
+    return out
 
-# ---------- Sidebar setup ----------
+# ---------- Sidebar ----------
 st.sidebar.header("⚙️ Setup")
 if st.sidebar.button("Ensure Dataset & Tables (idempotent)"):
     try:
@@ -179,80 +181,66 @@ if st.sidebar.button("Ensure Dataset & Tables (idempotent)"):
     except Exception as e:
         st.sidebar.error(f"❌ Setup failed: {e}")
 
-st.sidebar.markdown(f"**Project:** `{PROJECT_ID}`  \n**Dataset:** `{DATASET_ID}`  \n**Location:** `asia-south1`")
+st.sidebar.markdown(
+    f"**Project:** `{PROJECT_ID}`  \n**Dataset:** `{DATASET_ID}`  \n**Location:** `asia-south1`"
+)
 
 # ---------- Tabs ----------
-tab1, tab2, tab3, tab4 = st.tabs(["🏢 Tenants & Festivals", "📦 Products", "👥 Customers", "📈 Analytics"])
+tab1, tab2, tab3, tab4 = st.tabs(["🏢 Tenants", "📦 Products", "👥 Customers", "📈 Analytics"])
 
-# ----- Tenant Creation -----
+# ============================================================
+# Tab 1 — Tenants
+# ============================================================
 with tab1:
     st.subheader("🏢 Create Tenant (Manual Name Entry)")
-
-    tenant_name_input = st.text_input(
-        "Enter Tenant Name",
-        placeholder="e.g. Titan Company, Reliance Retail, Tata Motors"
-    )
+    tenant_name_input = st.text_input("Enter Tenant Name", placeholder="e.g. Titan Company, Reliance Retail")
 
     if st.button("➕ Insert Tenant"):
         if not tenant_name_input.strip():
             st.warning("⚠ Please enter a valid tenant name.")
         else:
-            try:
-                client = get_bq_client()
-                ensure_dataset(client)
-                ensure_tables(client)
+            client = get_bq_client()
+            ensure_dataset(client)
+            ensure_tables(client)
+            next_id = get_next_tenant_id(client)
 
-                # Get next tenant ID automatically
-                next_tenant_id = get_next_tenant_id(client)
+            tenant_row = {
+                "tenantid": next_id,
+                "tenantname": tenant_name_input.strip(),
+                "onboardeddate": datetime.now(timezone.utc).date().isoformat(),
+                "cataloglastupdated": None,
+                "lasttraineddate": None,
+                "active": True,
+            }
+            table_id = f"{PROJECT_ID}.{DATASET_ID}.tenantdata"
+            ok, errs = insert_rows_streaming_detailed(client, table_id, [tenant_row])
 
-                # Prepare row
-                tenant_row = {
-                    "tenantid": next_tenant_id,  # Internal ID (not shown to user)
-                    "tenantname": tenant_name_input.strip(),
-                    "onboardeddate": datetime.now(timezone.utc).date().isoformat(),
-                    "cataloglastupdated": None,
-                    "lasttraineddate": None,
-                    "active": True
-                }
+            if errs:
+                st.error("❌ Failed to insert tenant.")
+                st.code(format_bq_errors(errs), language="text")
+            else:
+                st.success(f"✅ Tenant '{tenant_name_input}' inserted successfully (ID {next_id}).")
 
-                table_id = f"{PROJECT_ID}.{DATASET_ID}.tenantdata"
-                ok, errs = insert_rows_streaming_detailed(client, table_id, [tenant_row])
-
-                if errs:
-                    st.error("❌ Failed to insert tenant.")
-                    st.code(format_bq_errors(errs), language="text")
-                else:
-                    st.success(f"✅ Tenant '{tenant_name_input}' inserted successfully with internal ID {next_tenant_id}.")
-
-            except Exception as e:
-                st.error(f"❌ Error inserting tenant: {e}")
-
-    st.markdown("---")
-
-
-# ----- Tab 2: Products -----
+# ============================================================
+# Tab 2 — Products
+# ============================================================
 with tab2:
-    st.subheader("📦 Generate Products (Weighted Categories with Tenant Names)")
-
+    st.subheader("📦 Generate Products (Weighted Categories with Tenant Name)")
     try:
         client = get_bq_client()
         tdf = fetch_tenants_df(client)
         if tdf is None or tdf.empty:
-            st.info("⚠ No tenants found. Please add a tenant first in the 'Tenants & Festivals' tab.")
+            st.info("⚠ No tenants found. Please add a tenant first.")
         else:
-            tenant_name = st.selectbox("Select Tenant Name for product insertion", tdf["tenantname"].tolist(), key="prod_tenant_name_dropdown")
+            tenant_name = st.selectbox("Select Tenant", tdf["tenantname"].tolist(), key="prod_tenant")
             tenant_id = int(tdf.loc[tdf["tenantname"] == tenant_name, "tenantid"].iloc[0])
-
             num_products = st.slider("Number of products", 10, 10000, 200, step=10)
 
-            if st.button("➕ Insert Products"):
+            if st.button("➕ Generate & Insert Products"):
                 client = get_bq_client()
-                st.info(f"📦 Generating {num_products} products for tenant **{tenant_name}** (ID: {tenant_id})...")
-
-                # Generate products using weighted categories
+                st.info(f"📦 Generating {num_products} products for **{tenant_name}** (ID: {tenant_id})...")
                 products = gen_products(tenant_id, num_products)
 
-                # Insert into BigQuery
                 table_id = f"{PROJECT_ID}.{DATASET_ID}.productcatalog"
                 ok, errs = insert_rows_streaming_detailed(client, table_id, products)
 
@@ -262,233 +250,173 @@ with tab2:
                 if ok:
                     st.success(f"✅ Successfully inserted {ok} products for **{tenant_name}**.")
     except Exception as e:
-        st.error(f"❌ Failed to load products tab: {e}")
+        st.error(f"❌ Failed to load Products tab: {e}")
 
-# ----- ✅ TAB 3: Generate Customers Using Existing Product Catalog -----
+# ============================================================
+# Tab 3 — Customers
+# ============================================================
 with tab3:
-    st.subheader("👥 Generate Customers & Purchase Orders (Using Real Product Catalog)")
-
+    st.subheader("👥 Generate Customers & Orders (Using Real Product Catalog)")
     try:
         client = get_bq_client()
         tdf = fetch_tenants_df(client)
 
         if tdf is None or tdf.empty:
-            st.info("No tenants found. Add a tenant in Tab 1 first.")
-            st.stop()
+            st.info("No tenants found. Add a tenant in Tab 1.")
+        else:
+            tname = st.selectbox("Select Tenant", tdf["tenantname"].tolist(), key="cust_tenant_select")
+            tid = int(tdf.loc[tdf["tenantname"] == tname, "tenantid"].iloc[0])
 
-        tname = st.selectbox("Select Tenant", tdf["tenantname"].tolist(), key="cust_tenant_select")
-        tid = int(tdf.loc[tdf["tenantname"] == tname, "tenantid"].iloc[0])
+            num_customers = st.slider("Number of customers", 1, 100000, 500, step=50)
+            avg_orders = st.slider("Average orders per customer", 1, 30, 6)
+            sale_prob = st.slider("Sale-season discount probability (%)", 0, 100, 30)
+            repeat_prob = st.slider("Repeat buyer probability (%)", 0, 100, 10)
+            high_spender_prob = st.slider("High-value purchase probability (%)", 0, 100, 12)
 
-        num_customers = st.slider("Number of customers", 1, 100000, 500, step=50)
-        avg_orders = st.slider("Average orders per customer", 1, 30, 6)
-        sale_prob = st.slider("Sale-season discount probability (%)", 0, 100, 30)
-        repeat_prob = st.slider("Repeat buyer probability (%)", 0, 100, 10)
-        high_spender_prob = st.slider("High-value purchase probability (%)", 0, 100, 12)
+            if st.button("➕ Insert Customers Using Existing Product Catalog"):
+                # Fetch products
+                product_query = f"""
+                SELECT productid, productprice, productcategory
+                FROM `{PROJECT_ID}.{DATASET_ID}.productcatalog`
+                WHERE tenantid = @tid
+                """
+                product_df = client.query(
+                    product_query,
+                    job_config=bigquery.QueryJobConfig(
+                        query_parameters=[bigquery.ScalarQueryParameter("tid", "INT64", tid)]
+                    ),
+                ).result().to_dataframe()
 
-        if st.button("➕ Insert Customers Using Existing Product Catalog"):
-            client = get_bq_client()
+                if product_df.empty:
+                    st.error(f"❌ No products found for tenant **{tname}**. Please add products first.")
+                else:
+                    products = product_df.to_dict(orient="records")
+                    customers = gen_customers(
+                        tid, products, num_customers, avg_orders, sale_prob, repeat_prob, high_spender_prob
+                    )
 
-            # 1️⃣ Get products for this tenant
-            product_query = f"""
-            SELECT productid, productprice, productcategory
-            FROM `{PROJECT_ID}.{DATASET_ID}.productcatalog`
-            WHERE tenantid = @tid
-            """
-            product_df = client.query(
-                product_query,
-                job_config=bigquery.QueryJobConfig(
-                    query_parameters=[
-                        bigquery.ScalarQueryParameter("tid", "INT64", tid)
-                    ]
-                )
-            ).result().to_dataframe()
+                    cust_table = f"{PROJECT_ID}.{DATASET_ID}.customerdata"
+                    ok, errs = insert_rows_streaming_detailed(client, cust_table, customers)
 
-            if product_df.empty:
-                st.error(f"❌ No products found for tenant **{tname}**. Please add products first.")
-                st.stop()
-
-            products = product_df.to_dict(orient="records")
-
-            # ✅ MAP category weights (safe fallback if config missing)
-            category_weights = {
-                c: PRODUCT_CATEGORY_CONFIG.get(c, {}).get("weight", 1)
-                for c in product_df["productcategory"].unique()
-            }
-
-
-            def weighted_random_product():
-                categories = list(category_weights.keys())
-                weights = [category_weights[c] for c in categories]
-                chosen_category = random.choices(categories, weights=weights, k=1)[0]
-                eligible = [p for p in products if p["productcategory"] == chosen_category]
-                return random.choice(eligible)
-
-
-            # 2️⃣ Generate synthetic customers
-            customers = []
-            for _ in range(num_customers):
-                cid = str(uuid.uuid4())
-                wishlist = random.sample([p["productid"] for p in products], min(5, len(products)))
-                orders = []
-
-                num_purchases = random.randint(max(1, avg_orders - 2), avg_orders + 2)
-
-                for __ in range(num_purchases):
-                    p = weighted_random_product()
-                    pid = p["productid"]
-                    mrp = float(p["productprice"])
-
-                    is_sale = (random.random() * 100) < sale_prob
-                    saleprice = round(mrp * (1 - random.uniform(0.05, 0.40)), 2) if is_sale else mrp
-                    qty = random.randint(1, 5) if random.random() * 100 < high_spender_prob else random.randint(1, 3)
-
-                    base_date = faker.date_between(start_date='-730d', end_date='today')
-
-                    orders.append({
-                        "productId": pid,
-                        "purchaseDate": base_date.isoformat(),
-                        "opuraProductID": f"OP_{tid}_{random.randint(1000, 9999)}",
-                        "purchaseQuantity": qty,
-                        "mrp": mrp,
-                        "saleprice": saleprice
-                    })
-
-                    if random.random() * 100 < repeat_prob:
-                        repeat_date = base_date + timedelta(days=random.randint(15, 35))
-                        orders.append({
-                            "productId": pid,
-                            "purchaseDate": repeat_date.isoformat(),
-                            "opuraProductID": f"OP_{tid}_{random.randint(1000, 9999)}",
-                            "purchaseQuantity": qty,
-                            "mrp": mrp,
-                            "saleprice": saleprice
-                        })
-
-                customers.append({
-                    "customerid": cid,
-                    "opuracustomerid": f"CUST_{tid}_{random.randint(10000, 99999)}",
-                    "tenantid": tid,
-                    "customername": faker.name(),
-                    "customerpersonaldetails": {"age": random.randint(18, 70),
-                                                "gender": random.choice(["Male", "Female", "Other"])},
-                    "customergeolocations": {"city": faker.city()},
-                    "customerwishlist": wishlist,
-                    "purchaseorders": orders,
-                    "customertags": {"high_spender": random.random() * 100 < high_spender_prob},
-                    "opuracustomertags": {},
-                    "recommendedproducts": random.sample([p["productid"] for p in products], min(3, len(products)))
-                })
-
-            # 3️⃣ Insert into BigQuery
-            cust_table = f"{PROJECT_ID}.{DATASET_ID}.customerdata"
-            ok, errs = insert_rows_streaming_detailed(client, cust_table, customers)
-
-            if errs:
-                st.error(f"⚠️ Inserted {ok}, but {len(errs)} rows failed")
-                st.code(format_bq_errors(errs), language="text")
-            else:
-                st.success(f"✅ Successfully inserted {ok} customers for **{tname}**")
-
+                    if errs:
+                        st.error(f"⚠️ Inserted {ok}, but {len(errs)} rows failed")
+                        st.code(format_bq_errors(errs), language="text")
+                    if ok:
+                        st.success(f"✅ Successfully inserted {ok} customers for **{tname}**")
     except Exception as e:
         st.error(f"❌ Failed: {e}")
 
-
-# ----- Tab 4: Analytics (Dashboard per Tenant) -----
+# ============================================================
+# Tab 4 — Analytics (KPIs + Charts)
+# ============================================================
 with tab4:
     st.subheader("📈 Tenant Analytics Dashboard")
-    st.info("Select a tenant (by name) to view KPIs and charts.")
+    st.info("Select a tenant to view KPIs and charts.")
 
     try:
         client = get_bq_client()
         tdf = fetch_tenants_df(client)
         if tdf is None or tdf.empty:
-            st.warning("⚠ No tenants found. Please insert tenants first.")
+            st.warning("⚠ No tenants found.")
         else:
             tenant_choice = st.selectbox("🔍 Select Tenant for Analysis", tdf["tenantname"].tolist())
             tenant_id = int(tdf.loc[tdf["tenantname"] == tenant_choice, "tenantid"].iloc[0])
-
-            # Let user control Top N products
             top_n_products = st.slider("Top N products by revenue", min_value=5, max_value=50, value=10, step=5)
 
             if st.button("▶️ Run Analytics"):
                 st.success(f"📊 Showing data for tenant: **{tenant_choice}**")
 
-                # ========== KPI Metrics ==========
+                # KPIs
                 sql_kpi = f"""
                 WITH orders AS (
                   SELECT po.saleprice AS saleprice, po.purchaseQuantity AS qty, po.mrp
                   FROM `{PROJECT_ID}.{DATASET_ID}.customerdata` c,
                   UNNEST(c.purchaseorders) AS po
-                  WHERE c.tenantid = {tenant_id}
+                  WHERE c.tenantid = @tid
                 )
                 SELECT
-                  (SELECT COUNT(*) FROM `{PROJECT_ID}.{DATASET_ID}.customerdata` WHERE tenantid = {tenant_id}) AS total_customers,
-                  SUM(qty) AS total_orders,
-                  SUM(saleprice * qty) AS total_revenue,
-                  AVG(1 - (saleprice / NULLIF(mrp, 0))) * 100 AS avg_discount
+                  (SELECT COUNT(*) FROM `{PROJECT_ID}.{DATASET_ID}.customerdata` WHERE tenantid = @tid) AS total_customers,
+                  COALESCE(SUM(qty), 0) AS total_orders,
+                  COALESCE(SUM(saleprice * qty), 0) AS total_revenue,
+                  COALESCE(AVG(1 - (saleprice / NULLIF(mrp, 0))) * 100, 0) AS avg_discount
                 FROM orders
                 """
-                kpi_df = client.query(sql_kpi).result().to_dataframe()
+                kpi_df = client.query(
+                    sql_kpi, job_config=bigquery.QueryJobConfig(
+                        query_parameters=[bigquery.ScalarQueryParameter("tid","INT64",tenant_id)]
+                    )
+                ).result().to_dataframe()
 
-                col1, col2, col3, col4 = st.columns(4)
-                if not kpi_df.empty:
-                    col1.metric("👥 Total Customers", int(kpi_df["total_customers"][0] or 0))
-                    col2.metric("🛒 Total Orders", int(kpi_df["total_orders"][0] or 0))
-                    col3.metric("💰 Total Revenue", f"{(kpi_df['total_revenue'][0] or 0):,.2f}")
-                    col4.metric("🏷 Avg Discount (%)", f"{(kpi_df['avg_discount'][0] or 0):.2f}%")
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("👥 Customers", int(kpi_df["total_customers"][0] or 0))
+                c2.metric("🛒 Orders", int(kpi_df["total_orders"][0] or 0))
+                c3.metric("💰 Revenue", f"{(kpi_df['total_revenue'][0] or 0):,.2f}")
+                c4.metric("🏷 Avg Discount (%)", f"{(kpi_df['avg_discount'][0] or 0):.2f}%")
 
                 st.markdown("---")
 
-                # ========== Revenue by Category ==========
+                # Revenue by Category
                 sql_category = f"""
                 WITH orders AS (
                   SELECT po.saleprice AS saleprice, po.purchaseQuantity AS qty, po.productId AS productid
                   FROM `{PROJECT_ID}.{DATASET_ID}.customerdata` c,
                   UNNEST(c.purchaseorders) AS po
-                  WHERE c.tenantid = {tenant_id}
+                  WHERE c.tenantid = @tid
                 )
                 SELECT pc.productcategory AS category, SUM(o.saleprice * o.qty) AS revenue
                 FROM orders o
                 LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.productcatalog` pc
-                ON o.productid = pc.productid
+                  ON o.productid = pc.productid
                 GROUP BY category
                 ORDER BY revenue DESC
                 """
-                cat_df = client.query(sql_category).result().to_dataframe()
+                cat_df = client.query(
+                    sql_category, job_config=bigquery.QueryJobConfig(
+                        query_parameters=[bigquery.ScalarQueryParameter("tid","INT64",tenant_id)]
+                    )
+                ).result().to_dataframe()
 
-                # ========== Monthly Revenue Trend ==========
+                # Trend
                 sql_trend = f"""
                 SELECT
                   DATE_TRUNC(po.purchaseDate, MONTH) AS month,
                   SUM(po.saleprice * po.purchaseQuantity) AS revenue
                 FROM `{PROJECT_ID}.{DATASET_ID}.customerdata` c,
                 UNNEST(c.purchaseorders) AS po
-                WHERE c.tenantid = {tenant_id}
+                WHERE c.tenantid = @tid
                 GROUP BY month
                 ORDER BY month
                 """
-                trend_df = client.query(sql_trend).result().to_dataframe()
+                trend_df = client.query(
+                    sql_trend, job_config=bigquery.QueryJobConfig(
+                        query_parameters=[bigquery.ScalarQueryParameter("tid","INT64",tenant_id)]
+                    )
+                ).result().to_dataframe()
 
-                # ========== Avg Discount by Category ==========
+                # Avg Discount by Category
                 sql_discount = f"""
                 WITH orders AS (
                   SELECT po.productId, po.saleprice, po.mrp
                   FROM `{PROJECT_ID}.{DATASET_ID}.customerdata` c,
                   UNNEST(c.purchaseorders) AS po
-                  WHERE c.tenantid = {tenant_id}
+                  WHERE c.tenantid = @tid
                 )
                 SELECT
                   pc.productcategory AS category,
                   AVG(1 - (o.saleprice / NULLIF(o.mrp, 0))) * 100 AS avg_discount
                 FROM orders o
                 LEFT JOIN `{PROJECT_ID}.{DATASET_ID}.productcatalog` pc
-                ON o.productId = pc.productid
+                  ON o.productId = pc.productid
                 GROUP BY category
                 ORDER BY avg_discount DESC
                 """
-                disc_df = client.query(sql_discount).result().to_dataframe()
+                disc_df = client.query(
+                    sql_discount, job_config=bigquery.QueryJobConfig(
+                        query_parameters=[bigquery.ScalarQueryParameter("tid","INT64",tenant_id)]
+                    )
+                ).result().to_dataframe()
 
-                # ========== Top Products by Revenue ==========
+                # Top Products
                 sql_top_products = f"""
                 SELECT
                   COALESCE(pc.productname, po.productId) AS productname,
@@ -497,14 +425,22 @@ with tab4:
                 UNNEST(c.purchaseorders) AS po
                 JOIN `{PROJECT_ID}.{DATASET_ID}.productcatalog` pc
                   ON po.productId = pc.productid
-                WHERE c.tenantid = {tenant_id}
+                WHERE c.tenantid = @tid
                 GROUP BY productname
                 ORDER BY revenue DESC
-                LIMIT {top_n_products}
+                LIMIT @topn
                 """
-                top_df = client.query(sql_top_products).result().to_dataframe()
+                top_df = client.query(
+                    sql_top_products,
+                    job_config=bigquery.QueryJobConfig(
+                        query_parameters=[
+                            bigquery.ScalarQueryParameter("tid","INT64",tenant_id),
+                            bigquery.ScalarQueryParameter("topn","INT64",top_n_products),
+                        ]
+                    )
+                ).result().to_dataframe()
 
-                # ========== Customer Segmentation (High/Medium/Low spenders) ==========
+                # Segmentation
                 sql_segments = f"""
                 WITH cust_revenue AS (
                   SELECT
@@ -512,7 +448,7 @@ with tab4:
                     SUM(po.saleprice * po.purchaseQuantity) AS total_spend
                   FROM `{PROJECT_ID}.{DATASET_ID}.customerdata` c,
                   UNNEST(c.purchaseorders) AS po
-                  WHERE c.tenantid = {tenant_id}
+                  WHERE c.tenantid = @tid
                   GROUP BY c.customerid
                 ),
                 thresholds AS (
@@ -531,9 +467,13 @@ with tab4:
                 GROUP BY segment
                 ORDER BY segment
                 """
-                seg_df = client.query(sql_segments).result().to_dataframe()
+                seg_df = client.query(
+                    sql_segments, job_config=bigquery.QueryJobConfig(
+                        query_parameters=[bigquery.ScalarQueryParameter("tid","INT64",tenant_id)]
+                    )
+                ).result().to_dataframe()
 
-                # ========== Layout: 2 charts side-by-side (category & discount) ==========
+                # ----- Charts -----
                 c1, c2 = st.columns(2)
                 with c1:
                     st.subheader("📦 Revenue by Category")
@@ -551,7 +491,6 @@ with tab4:
                     else:
                         st.warning("No discount data found.")
 
-                # ========== Layout: Top Products & Segmentation ==========
                 c3, c4 = st.columns(2)
                 with c3:
                     st.subheader(f"🏆 Top {top_n_products} Products by Revenue")
@@ -573,7 +512,6 @@ with tab4:
                     else:
                         st.warning("No segmentation data available.")
 
-                # ========== Full Width: Revenue Trend ==========
                 st.subheader("📆 Monthly Revenue Trend")
                 if not trend_df.empty:
                     fig_trend = px.line(trend_df, x="month", y="revenue", markers=True,
@@ -581,6 +519,5 @@ with tab4:
                     st.plotly_chart(fig_trend, use_container_width=True)
                 else:
                     st.warning("No trend data available.")
-
     except Exception as e:
         st.error(f"❌ Failed to load analytics: {str(e)}")
