@@ -27,6 +27,15 @@ st.title("🚀 BigQuery Data Generator (Streaming Inserts)")
 
 faker = Faker()
 
+PRODUCT_CATEGORY_CONFIG = {
+    "Electronics": {"price_range": (500, 5000), "weight": 5},
+    "Grocery": {"price_range": (10, 300), "weight": 8},
+    "Apparel": {"price_range": (100, 1500), "weight": 6},
+    "Books": {"price_range": (50, 500), "weight": 3},
+    "Furniture": {"price_range": (1500, 25000), "weight": 2},
+    "Beauty": {"price_range": (50, 800), "weight": 4},
+}
+
 # ---------- Helpers ----------
 def iso_date(dt) -> str:
     return dt.isoformat()[:10]
@@ -154,7 +163,7 @@ def gen_customers(tenantid: int, products, num_customers: int, avg_orders: int, 
             "customerwishlist": [str(x) for x in wishlist],
             "purchaseorders": orders,
             "customertags": {"high_spender": bool(random.random() * 100 < high_spender_prob_pct)},
-            "opuracustomertags": json.dumps({"tier": random.choice(["gold", "silver", "bronze"])}),  # JSON string
+            "opuracustomertags": {"tier": random.choice(["gold", "silver", "bronze"])},
             "recommendedproducts": [str(x) for x in random.sample(product_ids, k=min(3, len(product_ids)))],
         })
     return customers
@@ -255,122 +264,130 @@ with tab2:
     except Exception as e:
         st.error(f"❌ Failed to load products tab: {e}")
 
-# ----- Tab 3: Customers -----
+# ----- ✅ TAB 3: Generate Customers Using Existing Product Catalog -----
 with tab3:
     st.subheader("👥 Generate Customers & Purchase Orders (Using Real Product Catalog)")
+
     try:
         client = get_bq_client()
         tdf = fetch_tenants_df(client)
+
         if tdf is None or tdf.empty:
-            st.info("No tenants found. Add a tenant in Tab 1.")
-        else:
-            tname = st.selectbox("Select Tenant", tdf["tenantname"].tolist(), key="cust_tenant_select")
-            tid = int(tdf.loc[tdf["tenantname"] == tname, "tenantid"].iloc[0])
+            st.info("No tenants found. Add a tenant in Tab 1 first.")
+            st.stop()
 
-            num_customers = st.slider("Number of customers", 1, 100000, 500, step=50)
-            avg_orders = st.slider("Average orders per customer", 1, 30, 6)
-            sale_prob = st.slider("Sale-season discount probability (%)", 0, 100, 30)
-            repeat_prob = st.slider("Repeat buyer probability (%)", 0, 100, 10)
-            high_spender_prob = st.slider("High-value purchase probability (%)", 0, 100, 12)
+        tname = st.selectbox("Select Tenant", tdf["tenantname"].tolist(), key="cust_tenant_select")
+        tid = int(tdf.loc[tdf["tenantname"] == tname, "tenantid"].iloc[0])
 
-            if st.button("➕ Insert Customers Using Existing Product Catalog"):
-                client = get_bq_client()
+        num_customers = st.slider("Number of customers", 1, 100000, 500, step=50)
+        avg_orders = st.slider("Average orders per customer", 1, 30, 6)
+        sale_prob = st.slider("Sale-season discount probability (%)", 0, 100, 30)
+        repeat_prob = st.slider("Repeat buyer probability (%)", 0, 100, 10)
+        high_spender_prob = st.slider("High-value purchase probability (%)", 0, 100, 12)
 
-                # 1️⃣ Fetch products from BigQuery
-                product_query = f"""
-                SELECT productid, productprice, productcategory
-                FROM `{PROJECT_ID}.{DATASET_ID}.productcatalog`
-                WHERE tenantid = {tid}
-                """
-                product_df = client.query(product_query).result().to_dataframe()
+        if st.button("➕ Insert Customers Using Existing Product Catalog"):
+            client = get_bq_client()
 
-                if product_df.empty:
-                    st.error(f"❌ No products found for tenant **{tname}**. Please add products first.")
-                else:
-                    # Convert products into list of dicts
-                    products = product_df.to_dict(orient="records")
+            # 1️⃣ Get products for this tenant
+            product_query = f"""
+            SELECT productid, productprice, productcategory
+            FROM `{PROJECT_ID}.{DATASET_ID}.productcatalog`
+            WHERE tenantid = @tid
+            """
+            product_df = client.query(
+                product_query,
+                job_config=bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("tid", "INT64", tid)
+                    ]
+                )
+            ).result().to_dataframe()
 
-                    # Weighted random selection per category
-                    category_weights = {c: PRODUCT_CATEGORY_CONFIG.get(c, {"weight": 1})["weight"]
-                                        for c in product_df["productcategory"].unique()}
+            if product_df.empty:
+                st.error(f"❌ No products found for tenant **{tname}**. Please add products first.")
+                st.stop()
+
+            products = product_df.to_dict(orient="records")
+
+            # ✅ MAP category weights (safe fallback if config missing)
+            category_weights = {
+                c: PRODUCT_CATEGORY_CONFIG.get(c, {}).get("weight", 1)
+                for c in product_df["productcategory"].unique()
+            }
 
 
-                    def weighted_random_product():
-                        cats = list(category_weights.keys())
-                        weights = [category_weights[c] for c in cats]
-                        chosen_category = random.choices(cats, weights=weights, k=1)[0]
-                        # Filter only products from the chosen category
-                        eligible_products = [p for p in products if p["productcategory"] == chosen_category]
-                        return random.choice(eligible_products)
+            def weighted_random_product():
+                categories = list(category_weights.keys())
+                weights = [category_weights[c] for c in categories]
+                chosen_category = random.choices(categories, weights=weights, k=1)[0]
+                eligible = [p for p in products if p["productcategory"] == chosen_category]
+                return random.choice(eligible)
 
 
-                    # 2️⃣ Generate customers using REAL products
-                    customers = []
-                    for _ in range(num_customers):
-                        cid = str(uuid.uuid4())
-                        wishlist = random.sample([p["productid"] for p in products], min(5, len(products)))
-                        orders = []
-                        num_purchases = random.randint(max(1, avg_orders - 2), avg_orders + 2)
+            # 2️⃣ Generate synthetic customers
+            customers = []
+            for _ in range(num_customers):
+                cid = str(uuid.uuid4())
+                wishlist = random.sample([p["productid"] for p in products], min(5, len(products)))
+                orders = []
 
-                        for __ in range(num_purchases):
-                            p = weighted_random_product()
-                            pid = p["productid"]
-                            mrp = float(p["productprice"])
+                num_purchases = random.randint(max(1, avg_orders - 2), avg_orders + 2)
 
-                            is_sale = (random.random() * 100) < sale_prob
-                            saleprice = round(mrp * (1 - random.uniform(0.05, 0.40)), 2) if is_sale else mrp
-                            qty = random.randint(1, 5) if (
-                                                                      random.random() * 100) < high_spender_prob else random.randint(
-                                1, 3)
-                            base_date = faker.date_between(start_date='-730d', end_date='today')
+                for __ in range(num_purchases):
+                    p = weighted_random_product()
+                    pid = p["productid"]
+                    mrp = float(p["productprice"])
 
-                            orders.append({
-                                "productId": pid,
-                                "purchaseDate": base_date.isoformat()[:10],
-                                "opuraProductID": f"OP_{tid}_{random.randint(1000, 9999)}",
-                                "purchaseQuantity": qty,
-                                "mrp": mrp,
-                                "saleprice": saleprice
-                            })
+                    is_sale = (random.random() * 100) < sale_prob
+                    saleprice = round(mrp * (1 - random.uniform(0.05, 0.40)), 2) if is_sale else mrp
+                    qty = random.randint(1, 5) if random.random() * 100 < high_spender_prob else random.randint(1, 3)
 
-                            if (random.random() * 100) < repeat_prob:
-                                repeat_date = base_date + timedelta(days=random.randint(15, 35))
-                                orders.append({
-                                    "productId": pid,
-                                    "purchaseDate": repeat_date.isoformat()[:10],
-                                    "opuraProductID": f"OP_{tid}_{random.randint(1000, 9999)}",
-                                    "purchaseQuantity": qty,
-                                    "mrp": mrp,
-                                    "saleprice": saleprice
-                                })
+                    base_date = faker.date_between(start_date='-730d', end_date='today')
 
-                        customers.append({
-                            "customerid": cid,
-                            "opuracustomerid": f"CUST_{tid}_{random.randint(10000, 99999)}",
-                            "tenantid": tid,
-                            "customername": faker.name(),
-                            "customerpersonaldetails": {
-                                "age": random.randint(18, 70),
-                                "gender": random.choice(["Male", "Female", "Other"])
-                            },
-                            "customergeolocations": {"city": faker.city()},
-                            "customerwishlist": wishlist,
-                            "purchaseorders": orders,
-                            "customertags": {"high_spender": bool(random.random() * 100 < high_spender_prob)},
-                            "opuracustomertags": json.dumps({"tier": random.choice(["gold", "silver", "bronze"])}),
-                            "recommendedproducts": random.sample([p["productid"] for p in products],
-                                                                 min(3, len(products)))
+                    orders.append({
+                        "productId": pid,
+                        "purchaseDate": base_date.isoformat(),
+                        "opuraProductID": f"OP_{tid}_{random.randint(1000, 9999)}",
+                        "purchaseQuantity": qty,
+                        "mrp": mrp,
+                        "saleprice": saleprice
+                    })
+
+                    if random.random() * 100 < repeat_prob:
+                        repeat_date = base_date + timedelta(days=random.randint(15, 35))
+                        orders.append({
+                            "productId": pid,
+                            "purchaseDate": repeat_date.isoformat(),
+                            "opuraProductID": f"OP_{tid}_{random.randint(1000, 9999)}",
+                            "purchaseQuantity": qty,
+                            "mrp": mrp,
+                            "saleprice": saleprice
                         })
 
-                    # 3️⃣ Insert into BigQuery
-                    cust_table = f"{PROJECT_ID}.{DATASET_ID}.customerdata"
-                    ok, errs = insert_rows_streaming_detailed(client, cust_table, customers)
+                customers.append({
+                    "customerid": cid,
+                    "opuracustomerid": f"CUST_{tid}_{random.randint(10000, 99999)}",
+                    "tenantid": tid,
+                    "customername": faker.name(),
+                    "customerpersonaldetails": {"age": random.randint(18, 70),
+                                                "gender": random.choice(["Male", "Female", "Other"])},
+                    "customergeolocations": {"city": faker.city()},
+                    "customerwishlist": wishlist,
+                    "purchaseorders": orders,
+                    "customertags": {"high_spender": random.random() * 100 < high_spender_prob},
+                    "opuracustomertags": {},
+                    "recommendedproducts": random.sample([p["productid"] for p in products], min(3, len(products)))
+                })
 
-                    if errs:
-                        st.error(f"❌ Inserted {ok} customers, but {len(errs)} errors occurred.")
-                        st.code(format_bq_errors(errs), language="text")
-                    if ok:
-                        st.success(f"✅ Successfully inserted {ok} customers using REAL products for **{tname}**.")
+            # 3️⃣ Insert into BigQuery
+            cust_table = f"{PROJECT_ID}.{DATASET_ID}.customerdata"
+            ok, errs = insert_rows_streaming_detailed(client, cust_table, customers)
+
+            if errs:
+                st.error(f"⚠️ Inserted {ok}, but {len(errs)} rows failed")
+                st.code(format_bq_errors(errs), language="text")
+            else:
+                st.success(f"✅ Successfully inserted {ok} customers for **{tname}**")
 
     except Exception as e:
         st.error(f"❌ Failed: {e}")
