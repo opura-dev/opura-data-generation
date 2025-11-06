@@ -1,4 +1,4 @@
-name: 🚀 Deploy Streamlit App to EC2 (Direct SSH - No ECR)
+name: 🚀 Deploy Streamlit App to EC2 (Direct SSH - Fixed Path, Rollback, Healthcheck)
 
 on:
   push:
@@ -23,6 +23,11 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > private_key.pem
           chmod 600 private_key.pem
 
+      - name: 🧪 Test EC2 Connection
+        run: |
+          echo "Testing SSH connectivity..."
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} "echo ✅ Connected to $(hostname)"
+
       - name: 🐳 Build Docker image
         run: |
           docker build -t $APP_NAME .
@@ -33,35 +38,36 @@ jobs:
       - name: 🚚 Upload Docker image to EC2
         run: |
           scp -i private_key.pem -o StrictHostKeyChecking=no app_image.tar \
-          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/app_image.tar
+          ubuntu@${{ secrets.EC2_HOST }}:~/app_image.tar
 
       - name: 🚀 Deploy container on EC2
         run: |
-          ssh -i private_key.pem -o StrictHostKeyChecking=no \
-          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+          ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} << 'EOF'
             set -e
             echo "🛑 Stopping old container (if running)..."
             docker stop opura-data-generation || true
             docker rm opura-data-generation || true
 
             echo "📦 Loading Docker image..."
-            docker load -i /tmp/app_image.tar
+            docker load -i ~/app_image.tar
+            rm -f ~/app_image.tar
 
             echo "🚀 Starting new container..."
             docker run -d \
               --name opura-data-generation \
+              --restart unless-stopped \
               -p 8501:8501 \
               -e GCP_SERVICE_ACCOUNT_JSON='${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}' \
               opura-data-generation:latest
 
-            echo "⌛ Waiting 15s for app to start..."
+            echo "⌛ Waiting 15 seconds for the app to start..."
             sleep 15
 
             echo "🔍 Performing health check..."
             if curl -f http://localhost:8501 >/dev/null 2>&1; then
               echo "✅ Health check passed!"
             else
-              echo "❌ Health check failed. Rolling back..."
+              echo "❌ Health check failed — rolling back..."
               docker stop opura-data-generation || true
               exit 1
             fi
