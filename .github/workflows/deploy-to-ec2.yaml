@@ -1,4 +1,4 @@
-name: 🚀 Deploy Streamlit App to EC2 (Direct SSH - Fixed Path, Rollback, Healthcheck)
+name: 🚀 Deploy Streamlit App to EC2 (Direct Repo Sync, Port 8503, Rollback + Healthcheck)
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
 
 env:
   APP_NAME: opura-data-generation
-  CONTAINER_PORT: 8501
-  HOST_PORT: 8501
+  CONTAINER_PORT: 8503
+  HOST_PORT: 8503
 
 jobs:
   deploy:
@@ -25,60 +25,55 @@ jobs:
 
       - name: 🧪 Test EC2 Connection
         run: |
-          echo "Testing SSH connectivity..."
           ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} "echo ✅ Connected to $(hostname)"
 
-      - name: 🐳 Build Docker image
-        run: |
-          docker build -t $APP_NAME .
-
-      - name: 📦 Save Docker image to tar file
-        run: docker save $APP_NAME -o app_image.tar
-
-      - name: 🧩 Ensure upload directory exists
+      - name: 🧹 Clean previous deployment folder
         run: |
           ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} \
-          "mkdir -p /home/ubuntu && chmod 755 /home/ubuntu"
+          "rm -rf ~/opura-data-generation && mkdir -p ~/opura-data-generation"
 
-      - name: 🚚 Upload Docker image to EC2
+      - name: 🚚 Copy repository to EC2
         run: |
-          scp -i private_key.pem -o StrictHostKeyChecking=no app_image.tar \
-          ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/app_image.tar
+          rsync -avz -e "ssh -i private_key.pem -o StrictHostKeyChecking=no" ./ \
+          ubuntu@${{ secrets.EC2_HOST }}:~/opura-data-generation
+
       - name: 🚀 Deploy container on EC2
         run: |
           ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} << 'EOF'
             set -e
+            cd ~/opura-data-generation
+
             echo "🛑 Stopping old container (if running)..."
             docker stop opura-data-generation || true
             docker rm opura-data-generation || true
 
-            echo "📦 Loading Docker image..."
-            docker load -i ~/app_image.tar
-            rm -f ~/app_image.tar
+            echo "🧹 Cleaning up unused images..."
+            docker system prune -af || true
 
-            echo "🚀 Starting new container..."
+            echo "🐳 Building new Docker image..."
+            docker build -t opura-data-generation .
+
+            echo "🚀 Starting new container on port 8503..."
             docker run -d \
               --name opura-data-generation \
               --restart unless-stopped \
-              -p 8501:8501 \
+              -p 8503:8503 \
               -e GCP_SERVICE_ACCOUNT_JSON='${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}' \
               opura-data-generation:latest
 
-            echo "⌛ Waiting 15 seconds for the app to start..."
-            sleep 15
+            echo "⌛ Waiting 20 seconds for the app to start..."
+            sleep 20
 
-            echo "🔍 Performing health check..."
-            if curl -f http://localhost:8501 >/dev/null 2>&1; then
-              echo "✅ Health check passed!"
+            echo "🔍 Running health check..."
+            if curl -f http://localhost:8503 >/dev/null 2>&1; then
+              echo "✅ Health check passed! 🎉"
             else
-              echo "❌ Health check failed — rolling back..."
+              echo "❌ Health check failed — rolling back!"
               docker stop opura-data-generation || true
               exit 1
             fi
-
-            echo "🎉 Deployment successful!"
           EOF
 
       - name: 🧹 Cleanup temporary files
         if: always()
-        run: rm -f private_key.pem app_image.tar
+        run: rm -f private_key.pem
