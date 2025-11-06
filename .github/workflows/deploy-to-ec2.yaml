@@ -29,9 +29,14 @@ jobs:
       - name: 🧱 Save Docker image to tar file
         run: docker save -o app_image.tar opura-data-generation:latest
 
-      - name: 📤 Upload code to EC2 (repo instead of image)
+      - name: 📤 Upload code to EC2 (clean repo only)
         run: |
-          scp -i private_key.pem -o StrictHostKeyChecking=no -r ./ ubuntu@${{ secrets.EC2_PUBLIC_IP }}:/home/ubuntu/opura-data-generation
+          echo "🧹 Preparing clean deploy package..."
+          mkdir -p deploy_temp
+          rsync -av --exclude '.git' --exclude '.github' --exclude '__pycache__' --exclude '*.pem' --exclude '*.tar' ./ deploy_temp/
+
+          echo "📦 Uploading to EC2..."
+          scp -i private_key.pem -o StrictHostKeyChecking=no -r deploy_temp/* ubuntu@${{ secrets.EC2_PUBLIC_IP }}:/home/ubuntu/opura-data-generation
 
       - name: 🚀 Deploy on EC2
         run: |
