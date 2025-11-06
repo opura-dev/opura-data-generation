@@ -17,4 +17,4 @@ ENV GOOGLE_APPLICATION_CREDENTIALS="/app/gcp-key.json"
 EXPOSE 8501
 
 # Start Streamlit app
-CMD bash -c 'echo "$GCP_SERVICE_ACCOUNT_JSON" > /app/gcp-key.json && streamlit run streamlit_app.py --server.port=8501 --server.address=0.0.0.0'
+CMD bash -c 'echo "$GCP_SERVICE_ACCOUNT_JSON" > /app/gcp-key.json && streamlit run streamlit_app.py --server.port=8503 --server.address=0.0.0.0'
