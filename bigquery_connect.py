@@ -8,12 +8,14 @@ from google.cloud import bigquery
 from google.oauth2 import service_account
 from google.api_core.exceptions import NotFound
 import pandas as pd
+import os
 
 # =========================
 # EDIT THESE FOR YOUR ENV:
 # =========================
 PROJECT_ID = "analytics-prod-476204"                  # e.g. "analytics-prod-476204"
-SERVICE_ACCOUNT_FILE = "analytics-prod-476204-9058be20a779.json"    # path to your service account JSON
+#SERVICE_ACCOUNT_FILE = "analytics-prod-476204-9058be20a779.json"    # path to your service account JSON
+SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "analytics-prod-476204-9058be20a779.json")
 DATASET_ID = "ops_data"
 LOCATION = "asia-south1"                             # Mumbai
 
