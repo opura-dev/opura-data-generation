@@ -3,16 +3,22 @@ name: 🚀 Deploy Streamlit App to EC2
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
+
+env:
+  APP_NAME: opura-data-generation
+  CONTAINER_PORT: 8501
+  HOST_PORT: 8501
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 🧾 Checkout code
+      - name: 🧾 Checkout repository
         uses: actions/checkout@v4
 
-      - name: 🔧 Configure AWS credentials
+      - name: ⚙️ Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -27,29 +33,59 @@ jobs:
         id: build-image
         run: |
           IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ secrets.AWS_ECR_REPOSITORY }}:latest"
+          echo "Building image: $IMAGE_URI"
           docker build -t $IMAGE_URI .
           docker push $IMAGE_URI
           echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
 
-      - name: ⚙️ Deploy to EC2 via SSH
-        uses: appleboy/ssh-action@v0.1.10
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            echo "Pulling latest Docker image..."
-            docker pull ${{ steps.build-image.outputs.image }}
+      - name: 🔑 Prepare SSH key
+        run: |
+          echo "${{ secrets.EC2_SSH_KEY }}" > private_key.pem
+          chmod 600 private_key.pem
 
-            echo "Stopping old container (if any)..."
-            docker stop opura-data-gen || true
-            docker rm opura-data-gen || true
+      - name: 🚀 Deploy to EC2
+        id: deploy
+        run: |
+          IMAGE_URI="${{ steps.build-image.outputs.image }}"
+          echo "Deploying image $IMAGE_URI on EC2 host ${{ secrets.EC2_HOST }}"
 
-            echo "Starting new container..."
+          ssh -o StrictHostKeyChecking=no -i private_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+            set -e
+
+            echo "🛑 Stopping any existing container..."
+            docker stop $APP_NAME || true
+            docker rm $APP_NAME || true
+
+            echo "📦 Pulling latest image..."
+            docker pull $IMAGE_URI
+
+            echo "🚀 Starting new container..."
             docker run -d \
-              --name opura-data-gen \
-              -p 8501:8501 \
+              --name $APP_NAME \
+              -p $HOST_PORT:$CONTAINER_PORT \
               -e GCP_SERVICE_ACCOUNT_JSON='${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}' \
-              ${{ steps.build-image.outputs.image }}
+              $IMAGE_URI
 
-            echo "✅ Deployment complete!"
+            echo "⌛ Waiting for app to start..."
+            sleep 15
+
+            echo "🔍 Running health check..."
+            if curl -f http://localhost:$HOST_PORT; then
+              echo "✅ Health check passed!"
+            else
+              echo "❌ Health check failed! Rolling back..."
+              docker stop $APP_NAME || true
+              docker rm $APP_NAME || true
+              docker run -d \
+                --name $APP_NAME \
+                -p $HOST_PORT:$CONTAINER_PORT \
+                $OLD_IMAGE_URI || echo "⚠️ No previous image found to rollback"
+              exit 1
+            fi
+
+            echo "🎉 Deployment successful!"
+          EOF
+
+      - name: 🧹 Cleanup
+        if: always()
+        run: rm -f private_key.pem
