@@ -15,6 +15,7 @@ import json
 # EDIT THESE FOR YOUR ENV:
 # =========================
 PROJECT_ID = "analytics-prod-476204"
+
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "analytics-prod-476204-9058be20a779.json")
 DATASET_ID = "ops_data"
 LOCATION = "asia-south1"
