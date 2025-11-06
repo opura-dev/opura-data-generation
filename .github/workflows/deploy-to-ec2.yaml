@@ -1,4 +1,4 @@
-name: 🚀 Deploy Streamlit App to EC2
+name: 🚀 Deploy Streamlit App to EC2 (Direct SSH - No ECR)
 
 on:
   push:
@@ -18,74 +18,57 @@ jobs:
       - name: 🧾 Checkout repository
         uses: actions/checkout@v4
 
-      - name: ⚙️ Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: 🐳 Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: 🧱 Build and push Docker image
-        id: build-image
-        run: |
-          IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${{ secrets.AWS_ECR_REPOSITORY }}:latest"
-          echo "Building image: $IMAGE_URI"
-          docker build -t $IMAGE_URI .
-          docker push $IMAGE_URI
-          echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
-
       - name: 🔑 Prepare SSH key
         run: |
           echo "${{ secrets.EC2_SSH_KEY }}" > private_key.pem
           chmod 600 private_key.pem
 
-      - name: 🚀 Deploy to EC2
-        id: deploy
+      - name: 🐳 Build Docker image
         run: |
-          IMAGE_URI="${{ steps.build-image.outputs.image }}"
-          echo "Deploying image $IMAGE_URI on EC2 host ${{ secrets.EC2_HOST }}"
+          docker build -t $APP_NAME .
 
-          ssh -o StrictHostKeyChecking=no -i private_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+      - name: 📦 Save Docker image to tar file
+        run: docker save $APP_NAME -o app_image.tar
+
+      - name: 🚚 Upload Docker image to EC2
+        run: |
+          scp -i private_key.pem -o StrictHostKeyChecking=no app_image.tar \
+          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/home/${{ secrets.EC2_USER }}/app_image.tar
+
+      - name: 🚀 Deploy container on EC2
+        run: |
+          ssh -i private_key.pem -o StrictHostKeyChecking=no \
+          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
             set -e
+            echo "🛑 Stopping old container (if running)..."
+            docker stop opura-data-generation || true
+            docker rm opura-data-generation || true
 
-            echo "🛑 Stopping any existing container..."
-            docker stop $APP_NAME || true
-            docker rm $APP_NAME || true
-
-            echo "📦 Pulling latest image..."
-            docker pull $IMAGE_URI
+            echo "📦 Loading Docker image..."
+            docker load -i app_image.tar
 
             echo "🚀 Starting new container..."
             docker run -d \
-              --name $APP_NAME \
-              -p $HOST_PORT:$CONTAINER_PORT \
+              --name opura-data-generation \
+              -p 8501:8501 \
               -e GCP_SERVICE_ACCOUNT_JSON='${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}' \
-              $IMAGE_URI
+              opura-data-generation:latest
 
-            echo "⌛ Waiting for app to start..."
+            echo "⌛ Waiting 15s for app to start..."
             sleep 15
 
-            echo "🔍 Running health check..."
-            if curl -f http://localhost:$HOST_PORT; then
+            echo "🔍 Performing health check..."
+            if curl -f http://localhost:8501 >/dev/null 2>&1; then
               echo "✅ Health check passed!"
             else
-              echo "❌ Health check failed! Rolling back..."
-              docker stop $APP_NAME || true
-              docker rm $APP_NAME || true
-              docker run -d \
-                --name $APP_NAME \
-                -p $HOST_PORT:$CONTAINER_PORT \
-                $OLD_IMAGE_URI || echo "⚠️ No previous image found to rollback"
+              echo "❌ Health check failed. Rolling back..."
+              docker stop opura-data-generation || true
               exit 1
             fi
 
             echo "🎉 Deployment successful!"
           EOF
 
-      - name: 🧹 Cleanup
+      - name: 🧹 Cleanup temporary files
         if: always()
-        run: rm -f private_key.pem
+        run: rm -f private_key.pem app_image.tar
