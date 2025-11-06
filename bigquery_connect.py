@@ -9,20 +9,35 @@ from google.oauth2 import service_account
 from google.api_core.exceptions import NotFound
 import pandas as pd
 import os
+import json
 
 # =========================
 # EDIT THESE FOR YOUR ENV:
 # =========================
-PROJECT_ID = "analytics-prod-476204"                  # e.g. "analytics-prod-476204"
-#SERVICE_ACCOUNT_FILE = "analytics-prod-476204-9058be20a779.json"    # path to your service account JSON
+PROJECT_ID = "analytics-prod-476204"
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "analytics-prod-476204-9058be20a779.json")
 DATASET_ID = "ops_data"
-LOCATION = "asia-south1"                             # Mumbai
+LOCATION = "asia-south1"
 
-# ---------- Connection ----------
 def get_bq_client() -> bigquery.Client:
-    creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE)
-    return bigquery.Client(project=PROJECT_ID, credentials=creds)
+    """Create a BigQuery client using service account credentials."""
+    try:
+        # 1️⃣ Environment variable contains raw JSON credentials
+        if SERVICE_ACCOUNT_FILE.strip().startswith("{"):
+            creds_dict = json.loads(SERVICE_ACCOUNT_FILE)
+            creds = service_account.Credentials.from_service_account_info(creds_dict)
+
+        # 2️⃣ Local JSON file (for dev)
+        elif os.path.exists(SERVICE_ACCOUNT_FILE):
+            creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE)
+
+        # 3️⃣ Fail gracefully
+        else:
+            raise FileNotFoundError(f"Service account credentials not found at: {SERVICE_ACCOUNT_FILE}")
+
+        return bigquery.Client(project=PROJECT_ID, credentials=creds)
+    except Exception as e:
+        raise RuntimeError(f"Failed to create BigQuery client: {e}")
 
 # ---------- Dataset/Table setup (idempotent) ----------
 def ensure_dataset(client: bigquery.Client, dataset_id: str = DATASET_ID, location: str = LOCATION) -> None:
