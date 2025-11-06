@@ -6,3 +6,11 @@ sqlalchemy>=1.4
 psycopg2-binary>=2.9
 faker>=18.0.0
 tqdm>=4.64.0
+google-api-core==2.27.0
+google-auth==2.41.1
+google-cloud-bigquery==3.38.0
+google-cloud-bigquery-storage==2.34.0
+google-cloud-core==2.4.3
+google-crc32c==1.7.1
+google-resumable-media==2.7.2
+googleapis-common-protos==1.71.0
